@@ -4,6 +4,8 @@ from pathlib import Path
 
 from engine.profiles.registry import load_profile
 from engine.core.a3_probe import run_a3_probe
+from engine.core.a3_viz import render_a3_ascii_map
+
 
 
 def run(config: dict):
@@ -49,13 +51,11 @@ def run(config: dict):
     # --------------------------------------------------
     a3 = profile.get("a3_diversity", {})
     a3_enable = bool(a3.get("enable", True))
-
-    # Strength of penalty (bigger => fewer repeats)
-    k_center = float(a3.get("k_center", 0.25))
+    k_center = float(a3.get("k_center", 1.30))
     k_edge = float(a3.get("k_edge", 0.05))
-
-    # Optional global cap (0 disables). With V0 we recommend 0 (disabled).
     cap = int(a3.get("cap", 0))
+
+    print(f"[A3CFG] enable={a3_enable} k_center={k_center} k_edge={k_edge} cap={cap}")
 
     rng = random.Random(int(tiles_cfg.get("seed", 123)))
 
@@ -64,14 +64,12 @@ def run(config: dict):
         ny = ((r + 0.5) / grid_h) * 2.0 - 1.0
         return (nx * nx) / (blend_cfg["ellipse_rx"] ** 2) + (ny * ny) / (blend_cfg["ellipse_ry"] ** 2) <= 1.0
 
-    # Precompute center mask (runs once, deterministic)
     center_mask = [[in_ellipse_cell(r, c) for c in range(grid_w)] for r in range(grid_h)]
 
     center_counts = {}
     global_counts = {}
 
     def weighted_pick(is_center: bool) -> str:
-        # Soft penalty: weight decays as a tile repeats in CENTER
         k = k_center if is_center else k_edge
 
         weights = []
@@ -118,7 +116,7 @@ def run(config: dict):
     print("[A3DBG] Top center repeats:", top)
 
     # --------------------------------------------------
-    # A3 PROBE (duplication rate inside ellipse)
+    # A3 PROBE
     # --------------------------------------------------
     res = run_a3_probe(
         placements=placements,
@@ -133,3 +131,14 @@ def run(config: dict):
     print("[A3] Center unique tiles:", res.center_unique)
     print("[A3] Center dup rate    :", round(res.center_dup_rate, 4))
     print("-" * 50)
+
+    # --------------------------------------------------
+    # A3 VISUAL PROOF (PNG outputs)
+    # --------------------------------------------------
+    render_a3_ascii_map(
+    placements=placements,
+    grid_w=grid_w,
+    grid_h=grid_h,
+    ellipse_rx=blend_cfg["ellipse_rx"],
+    ellipse_ry=blend_cfg["ellipse_ry"],
+)
