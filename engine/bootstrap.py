@@ -44,7 +44,7 @@ def run(config: dict):
     print(f"[V0] Simulating grid {grid_w} x {grid_h}")
 
     # Fake tile pool
-    fake_tiles = [f"tile_{i:04d}" for i in range(200)]
+    fake_tiles = [f"tile_{i:04d}" for i in range(80)]
 
     # --------------------------------------------------
     # A3 DIVERSITY (soft cap) - reduce repeats in center
@@ -68,17 +68,24 @@ def run(config: dict):
 
     center_counts = {}
     global_counts = {}
+    center_counts = {}
+    cap_fallbacks = 0  # combien de fois CAP a bloqué tous les choix (devrait rester faible)
 
     def weighted_pick(is_center: bool) -> str:
+        """
+        B1: CAP appliqué UNIQUEMENT au centre (center_mask).
+        - centre: hard cap via center_counts (<= cap) + pénalité A3 exp(-k*cc)
+        - bord: pas de cap (portrait-first = centre propre, périphérie libre)
+        """
+        nonlocal cap_fallbacks
         k = k_center if is_center else k_edge
 
         weights = []
         total_w = 0.0
         for tid in fake_tiles:
             cc = center_counts.get(tid, 0)
-            gc = global_counts.get(tid, 0)
 
-            if cap > 0 and gc >= cap:
+            if is_center and cap > 0 and cc >= cap:
                 w = 0.0
             else:
                 w = math.exp(-k * cc) if a3_enable else 1.0
@@ -87,7 +94,10 @@ def run(config: dict):
             total_w += w
 
         if total_w <= 0.0:
-            return rng.choice(fake_tiles)
+            cap_fallbacks += 1
+            min_cc = min(center_counts.get(t, 0) for t in fake_tiles)
+            candidates = [t for t in fake_tiles if center_counts.get(t, 0) == min_cc]
+            return rng.choice(candidates)
 
         x = rng.random() * total_w
         acc = 0.0
@@ -97,27 +107,25 @@ def run(config: dict):
                 return tid
         return fake_tiles[-1]
 
+
     placements = []
     for r in range(grid_h):
         for c in range(grid_w):
             is_center = center_mask[r][c]
             tid = weighted_pick(is_center)
-
             placements.append((r, c, tid))
 
+            global_counts[tid] = global_counts.get(tid, 0) + 1
             if is_center:
                 center_counts[tid] = center_counts.get(tid, 0) + 1
-            global_counts[tid] = global_counts.get(tid, 0) + 1
 
-    print(f"[V0] Total placements: {len(placements)}")
-
-    # Debug: top repeated tiles in center
+    print(f"[B1CFG] cap(center)={cap} a3_enable={a3_enable} k_center={k_center} k_edge={k_edge}")
     top = sorted(center_counts.items(), key=lambda kv: kv[1], reverse=True)[:10]
-    print("[A3DBG] Top center repeats:", top)
+    max_rep = top[0][1] if top else 0
+    print("[B1DBG] Top center repeats:", top)
+    print(f"[B1DBG] max_center_repeat={max_rep} (target <= {cap}) cap_fallbacks={cap_fallbacks}")
 
-    # --------------------------------------------------
-    # A3 PROBE
-    # --------------------------------------------------
+    print("-" * 50)
     res = run_a3_probe(
         placements=placements,
         grid_w=grid_w,
@@ -126,7 +134,6 @@ def run(config: dict):
         ellipse_ry=blend_cfg["ellipse_ry"],
     )
 
-    print("-" * 50)
     print("[A3] Center total tiles :", res.center_total)
     print("[A3] Center unique tiles:", res.center_unique)
     print("[A3] Center dup rate    :", round(res.center_dup_rate, 4))

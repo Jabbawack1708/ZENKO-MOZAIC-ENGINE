@@ -19,7 +19,7 @@ PROFILE = {
         "size": 48,
         "max": 800,
         "allow_reuse": True,
-        "seed": 123,
+        "seed": 3,
     },
 
     "blend": {
@@ -28,8 +28,8 @@ PROFILE = {
         "feather": 0.22,
         "center_x": 0.50,
         "center_y": 0.45,
-        "ellipse_rx": 0.28,
-        "ellipse_ry": 0.34,
+        "ellipse_rx": 0.252,
+        "ellipse_ry": 0.306,
     },
 
     # --- A3 : diversity / anti-repetition (gallery focus) ---
@@ -38,6 +38,6 @@ PROFILE = {
         "enable": True,
         "k_center": 1.30,
         "k_edge": 0.05,
-        "cap": 0,
+        "cap": 3,
     },
 }
