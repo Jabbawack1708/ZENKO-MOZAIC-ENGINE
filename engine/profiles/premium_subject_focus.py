@@ -31,4 +31,13 @@ PROFILE = {
         "ellipse_rx": 0.28,
         "ellipse_ry": 0.34,
     },
+
+    # --- A3 : diversity / anti-repetition (gallery focus) ---
+    # soft-cap: penalize repeats inside the center ellipse
+    "a3_diversity": {
+        "enable": True,
+        "k_center": 1.30,
+        "k_edge": 0.05,
+        "cap": 0,
+    },
 }
