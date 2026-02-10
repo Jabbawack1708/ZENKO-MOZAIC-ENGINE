@@ -35,6 +35,7 @@ PROFILE = {
     # --- A3 : diversity / anti-repetition (gallery focus) ---
     # soft-cap: penalize repeats inside the center ellipse
     "a3_diversity": {
+            "cap_override": 3,
         "enable": True,
         "k_center": 1.30,
         "k_edge": 0.05,

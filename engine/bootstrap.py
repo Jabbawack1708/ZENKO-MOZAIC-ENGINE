@@ -53,7 +53,7 @@ def run(config: dict):
     a3_enable = bool(a3.get("enable", True))
     k_center = float(a3.get("k_center", 1.30))
     k_edge = float(a3.get("k_edge", 0.05))
-    cap = int(a3.get("cap", 0))
+    cap = int(a3.get('cap_override', a3.get('cap', 0)))
 
     print(f"[A3CFG] enable={a3_enable} k_center={k_center} k_edge={k_edge} cap={cap}")
 
