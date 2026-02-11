@@ -5,7 +5,7 @@ from pathlib import Path
 from engine.profiles.registry import load_profile
 from engine.core.a3_probe import run_a3_probe
 from engine.core.a3_viz import render_a3_ascii_map
-
+from engine.core.debug_renderer import render_mosaic_debug
 
 
 def run(config: dict):
@@ -30,21 +30,46 @@ def run(config: dict):
         print(f"[OK] {key} directory -> {path.resolve()}")
 
     # --------------------------------------------------
-    # V0 GRID SIMULATION (design-only, no image output)
+    # V0 GRID SIMULATION (design-only)
     # --------------------------------------------------
     output = profile["output"]
     tiles_cfg = profile["tiles"]
     blend_cfg = profile["blend"]
 
-    tile_size = tiles_cfg["size"]
-    grid_w = output["width"] // tile_size
-    grid_h = output["height"] // tile_size
+    tile_size = int(tiles_cfg["size"])
+    grid_w = int(output["width"]) // tile_size
+    grid_h = int(output["height"]) // tile_size
 
     print("-" * 50)
     print(f"[V0] Simulating grid {grid_w} x {grid_h}")
 
-    # Fake tile pool
-    fake_tiles = [f"tile_{i:04d}" for i in range(80)]
+    # --------------------------------------------------
+    # REAL TILE POOL (fallback to fake)
+    # --------------------------------------------------
+    def list_tile_ids(folder: str) -> list[str]:
+        exts = {".jpg", ".jpeg", ".png", ".webp"}
+        p = Path(folder)
+        if not p.exists() or not p.is_dir():
+            return []
+        files = []
+        for f in p.iterdir():
+            if f.is_file() and f.suffix.lower() in exts:
+                files.append(f.name)
+        files.sort()
+        return files
+
+    raw_tiles_dir = str(paths.get("raw_tiles", "data/raw_tiles"))
+    tile_ids = list_tile_ids(raw_tiles_dir)
+
+    if tile_ids:
+        max_tiles = int(tiles_cfg.get("max", len(tile_ids)))
+        tile_ids = tile_ids[:max_tiles]
+        print(f"[V0] Using REAL tiles from {raw_tiles_dir} (count={len(tile_ids)})")
+    else:
+        tile_ids = [f"tile_{i:04d}" for i in range(80)]
+        print(f"[V0] Using FAKE tiles (count={len(tile_ids)})")
+
+    fake_tiles = tile_ids
 
     # --------------------------------------------------
     # A3 DIVERSITY (soft cap) - reduce repeats in center
@@ -53,7 +78,7 @@ def run(config: dict):
     a3_enable = bool(a3.get("enable", True))
     k_center = float(a3.get("k_center", 1.30))
     k_edge = float(a3.get("k_edge", 0.05))
-    cap = int(a3.get('cap_override', a3.get('cap', 0)))
+    cap = int(a3.get("cap_override", a3.get("cap", 0)))
 
     print(f"[A3CFG] enable={a3_enable} k_center={k_center} k_edge={k_edge} cap={cap}")
 
@@ -68,20 +93,20 @@ def run(config: dict):
 
     center_counts = {}
     global_counts = {}
-    center_counts = {}
-    cap_fallbacks = 0  # combien de fois CAP a bloqué tous les choix (devrait rester faible)
+    cap_fallbacks = 0
 
     def weighted_pick(is_center: bool) -> str:
         """
-        B1: CAP appliqué UNIQUEMENT au centre (center_mask).
-        - centre: hard cap via center_counts (<= cap) + pénalité A3 exp(-k*cc)
-        - bord: pas de cap (portrait-first = centre propre, périphérie libre)
+        B1: CAP applied only inside center ellipse.
+        - center: hard cap (<= cap) + A3 penalty exp(-k*count)
+        - edge: no cap
         """
         nonlocal cap_fallbacks
         k = k_center if is_center else k_edge
 
         weights = []
         total_w = 0.0
+
         for tid in fake_tiles:
             cc = center_counts.get(tid, 0)
 
@@ -105,8 +130,8 @@ def run(config: dict):
             acc += w
             if acc >= x:
                 return tid
-        return fake_tiles[-1]
 
+        return fake_tiles[-1]
 
     placements = []
     for r in range(grid_h):
@@ -140,12 +165,28 @@ def run(config: dict):
     print("-" * 50)
 
     # --------------------------------------------------
-    # A3 VISUAL PROOF (PNG outputs)
+    # A3 VISUAL PROOF (ASCII output)
     # --------------------------------------------------
     render_a3_ascii_map(
-    placements=placements,
-    grid_w=grid_w,
-    grid_h=grid_h,
-    ellipse_rx=blend_cfg["ellipse_rx"],
-    ellipse_ry=blend_cfg["ellipse_ry"],
-)
+        placements=placements,
+        grid_w=grid_w,
+        grid_h=grid_h,
+        ellipse_rx=blend_cfg["ellipse_rx"],
+        ellipse_ry=blend_cfg["ellipse_ry"],
+    )
+
+    # --------------------------------------------------
+    # V1 DEBUG IMAGE OUTPUT (REAL MOSAIC IMAGE)
+    # --------------------------------------------------
+    debug_output = Path(paths.get("output", "output")) / "mosaic_debug.png"
+
+    print("[V1] Rendering debug mosaic image...")
+    render_mosaic_debug(
+        placements=placements,
+        grid_w=grid_w,
+        grid_h=grid_h,
+        tile_size=tile_size,
+        raw_tiles_dir=raw_tiles_dir,
+        output_path=debug_output,
+    )
+    print(f"[V1] Debug image saved -> {debug_output.resolve()}")
