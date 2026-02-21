@@ -5,8 +5,22 @@ import random
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Tuple
-
 from PIL import Image, ImageFilter
+def _letterbox_resize(im: Image.Image, size: tuple[int, int], fill=(220, 220, 220)) -> Image.Image:
+    """Resize preserving aspect ratio, pad to target size (no stretching)."""
+    tw, th = size
+    im = im.convert("RGB")
+    w, h = im.size
+    if w == 0 or h == 0:
+        return Image.new("RGB", (tw, th), fill)
+    scale = min(tw / w, th / h)
+    nw, nh = max(1, int(w * scale)), max(1, int(h * scale))
+    resized = im.resize((nw, nh), resample=Image.BILINEAR)
+    canvas = Image.new("RGB", (tw, th), fill)
+    ox = (tw - nw) // 2
+    oy = (th - nh) // 2
+    canvas.paste(resized, (ox, oy))
+    return canvas
 
 from engine.core.color_match import TileFeature, build_tile_feature_cache, distance_lab, mean_lab
 
@@ -38,6 +52,13 @@ class TargetMatchConfig:
     ellipse_rx: float = 0.38
     ellipse_ry: float = 0.55
 
+    # focus center (normalized 0..1)
+    center_x: float = 0.50
+    center_y: float = 0.45
+
+    # optional multi-foci (list of dicts: {cx,cy,rx,ry} all normalized)
+    foci: list | None = None
+
     # anti-noise (tile-level)
     tile_blur: int = 0       # 0 = off, else GaussianBlur radius
 
@@ -45,10 +66,23 @@ class TargetMatchConfig:
     pick_mode: str = "best"  # "best" (stable) or "topk_random" (more variety, more noise)
 
 
-def _in_ellipse(r: int, c: int, grid_w: int, grid_h: int, rx: float, ry: float) -> bool:
-    nx = ((c + 0.5) / grid_w) * 2.0 - 1.0
-    ny = ((r + 0.5) / grid_h) * 2.0 - 1.0
+def _in_ellipse(r: int, c: int, grid_w: int, grid_h: int, rx: float, ry: float, center_x: float, center_y: float) -> bool:
+    cx = center_x * 2.0 - 1.0
+    cy = center_y * 2.0 - 1.0
+    nx = ((c + 0.5) / grid_w) * 2.0 - 1.0 - cx
+    ny = ((r + 0.5) / grid_h) * 2.0 - 1.0 - cy
     return (nx * nx) / (rx * rx) + (ny * ny) / (ry * ry) <= 1.0
+def _in_any_focus(r: int, c: int, cfg) -> bool:
+    if cfg.foci:
+        for f in cfg.foci:
+            cx = float(f.get("cx", cfg.center_x))
+            cy = float(f.get("cy", cfg.center_y))
+            rx = float(f.get("rx", cfg.ellipse_rx))
+            ry = float(f.get("ry", cfg.ellipse_ry))
+            if _in_ellipse(r, c, cfg.grid_w, cfg.grid_h, rx, ry, cx, cy):
+                return True
+        return False
+    return _in_ellipse(r, c, cfg.grid_w, cfg.grid_h, cfg.ellipse_rx, cfg.ellipse_ry, cfg.center_x, cfg.center_y)
 
 
 def _tile_path(raw_tiles_dir: str, tile_id: str) -> Path:
@@ -71,7 +105,7 @@ def _compute_target_cell_labs(
 ) -> List[Tuple[float, float, float]]:
     # resize target exactly to mosaic size
     w, h = grid_w * tile_size, grid_h * tile_size
-    t = target_img.convert("RGB").resize((w, h), resample=Image.BILINEAR)
+    t = _letterbox_resize(target_img, (w, h))
 
     labs: List[Tuple[float, float, float]] = []
     for r in range(grid_h):
@@ -127,7 +161,7 @@ def render_target_match_debug(cfg: TargetMatchConfig) -> Dict[str, int]:
             idx = r * cfg.grid_w + c
             t_lab = target_labs[idx]
 
-            is_center = _in_ellipse(r, c, cfg.grid_w, cfg.grid_h, cfg.ellipse_rx, cfg.ellipse_ry)
+            is_center = _in_any_focus(r, c, cfg)
             k = cfg.k_center if is_center else cfg.k_edge
 
             candidates = sample_features()
@@ -183,12 +217,12 @@ def render_target_match_debug(cfg: TargetMatchConfig) -> Dict[str, int]:
                     max_center_repeat = center_counts[tf.tile_id]
 
     # Portrait-first blend with target
-    target_resized = target_img.resize((W, H), resample=Image.BILINEAR)
+    target_resized = _letterbox_resize(target_img, (W, H))
     blended = Image.new("RGB", (W, H))
 
     for r in range(cfg.grid_h):
         for c in range(cfg.grid_w):
-            is_center = _in_ellipse(r, c, cfg.grid_w, cfg.grid_h, cfg.ellipse_rx, cfg.ellipse_ry)
+            is_center = _in_any_focus(r, c, cfg)
             alpha = float(cfg.alpha_center) if is_center else float(cfg.alpha_edge)
 
             box = (c * cfg.tile_size, r * cfg.tile_size, (c + 1) * cfg.tile_size, (r + 1) * cfg.tile_size)
