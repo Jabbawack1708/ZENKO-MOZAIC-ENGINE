@@ -5,7 +5,7 @@ from pathlib import Path
 from engine.profiles.registry import load_profile
 from engine.core.a3_probe import run_a3_probe
 from engine.core.a3_viz import render_a3_ascii_map
-from engine.core.debug_renderer import render_mosaic_debug
+from engine.core.debug_renderer import TargetMatchConfig, render_target_match_debug
 
 
 def run(config: dict):
@@ -29,16 +29,13 @@ def run(config: dict):
         path.mkdir(parents=True, exist_ok=True)
         print(f"[OK] {key} directory -> {path.resolve()}")
 
-    # --------------------------------------------------
-    # V0 GRID SIMULATION (design-only)
-    # --------------------------------------------------
     output = profile["output"]
     tiles_cfg = profile["tiles"]
     blend_cfg = profile["blend"]
 
     tile_size = int(tiles_cfg["size"])
-    grid_w = int(output["width"]) // tile_size
-    grid_h = int(output["height"]) // tile_size
+    grid_w = output["width"] // tile_size
+    grid_h = output["height"] // tile_size
 
     print("-" * 50)
     print(f"[V0] Simulating grid {grid_w} x {grid_h}")
@@ -96,17 +93,11 @@ def run(config: dict):
     cap_fallbacks = 0
 
     def weighted_pick(is_center: bool) -> str:
-        """
-        B1: CAP applied only inside center ellipse.
-        - center: hard cap (<= cap) + A3 penalty exp(-k*count)
-        - edge: no cap
-        """
         nonlocal cap_fallbacks
         k = k_center if is_center else k_edge
 
         weights = []
         total_w = 0.0
-
         for tid in fake_tiles:
             cc = center_counts.get(tid, 0)
 
@@ -130,7 +121,6 @@ def run(config: dict):
             acc += w
             if acc >= x:
                 return tid
-
         return fake_tiles[-1]
 
     placements = []
@@ -144,13 +134,11 @@ def run(config: dict):
             if is_center:
                 center_counts[tid] = center_counts.get(tid, 0) + 1
 
-    print(f"[B1CFG] cap(center)={cap} a3_enable={a3_enable} k_center={k_center} k_edge={k_edge}")
     top = sorted(center_counts.items(), key=lambda kv: kv[1], reverse=True)[:10]
     max_rep = top[0][1] if top else 0
     print("[B1DBG] Top center repeats:", top)
     print(f"[B1DBG] max_center_repeat={max_rep} (target <= {cap}) cap_fallbacks={cap_fallbacks}")
 
-    print("-" * 50)
     res = run_a3_probe(
         placements=placements,
         grid_w=grid_w,
@@ -158,15 +146,11 @@ def run(config: dict):
         ellipse_rx=blend_cfg["ellipse_rx"],
         ellipse_ry=blend_cfg["ellipse_ry"],
     )
-
     print("[A3] Center total tiles :", res.center_total)
     print("[A3] Center unique tiles:", res.center_unique)
     print("[A3] Center dup rate    :", round(res.center_dup_rate, 4))
-    print("-" * 50)
 
-    # --------------------------------------------------
-    # A3 VISUAL PROOF (ASCII output)
-    # --------------------------------------------------
+    # ASCII proof (optional)
     render_a3_ascii_map(
         placements=placements,
         grid_w=grid_w,
@@ -176,17 +160,40 @@ def run(config: dict):
     )
 
     # --------------------------------------------------
-    # V1 DEBUG IMAGE OUTPUT (REAL MOSAIC IMAGE)
+    # A4 TARGET MATCH DEBUG (LAB + cache + portrait-first blend)
     # --------------------------------------------------
-    debug_output = Path(paths.get("output", "output")) / "mosaic_debug.png"
+    target_path = str(paths.get("target", "data/target/target.jpg"))
+    if not Path(target_path).exists():
+        # fallback to png if jpg absent
+        if Path("data/target/target.png").exists():
+            target_path = "data/target/target.png"
 
-    print("[V1] Rendering debug mosaic image...")
-    render_mosaic_debug(
-        placements=placements,
-        grid_w=grid_w,
-        grid_h=grid_h,
-        tile_size=tile_size,
-        raw_tiles_dir=raw_tiles_dir,
-        output_path=debug_output,
+    out_path = str(Path(paths.get("output", "output")) / "mosaic_target_debug.png")
+
+    print("[A4] Rendering target-match debug mosaic...")
+    stats = render_target_match_debug(
+        TargetMatchConfig(
+            raw_tiles_dir=raw_tiles_dir,
+            target_path=target_path,
+            out_path=out_path,
+            grid_w=grid_w,
+            grid_h=grid_h,
+            tile_size=tile_size,
+        tile_blur=int(profile.get("a4_match", {}).get("tile_blur", 0)),
+
+            sample=int(profile.get("a4_match", {}).get("sample", 350)),
+            top_k=int(profile.get("a4_match", {}).get("top_k", 25)),
+            seed=int(tiles_cfg.get("seed", 123)),
+            a3_enable=a3_enable,
+            k_center=k_center,
+            k_edge=k_edge,
+            cap_center=int(profile.get("a4_match", {}).get("cap_center", cap if cap > 0 else 3)),
+            alpha_center=float(profile.get("a4_blend", {}).get("alpha_center", 0.70)),
+            alpha_edge=float(profile.get("a4_blend", {}).get("alpha_edge", 0.12)),
+            ellipse_rx=float(blend_cfg.get("ellipse_rx", 0.38)),
+            ellipse_ry=float(blend_cfg.get("ellipse_ry", 0.55)),
+        )
     )
-    print(f"[V1] Debug image saved -> {debug_output.resolve()}")
+
+    print(f"[A4] Debug image saved -> {out_path}")
+    print(f"[A4] tiles_pool={stats['tiles_pool']} max_center_repeat={stats['max_center_repeat']} cap_fallbacks={stats['cap_fallbacks']}")
